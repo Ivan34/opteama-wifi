@@ -14,7 +14,7 @@ paths:
       summary: Get all AP Wifi
       responses:
         200:
-          description: Return all AP
+          description: Return all AP Wifi
           schema:
             type: array
             items:
@@ -49,7 +49,7 @@ paths:
           description: Unknown Site
     post:
       tags: [AP]
-      operationId: ap.post_by_Site
+      operationId: ap.post_by_site
       summary: Deploy or update an AP in a Site
       parameters:
         - $ref: '#/parameters/Site'
@@ -62,7 +62,7 @@ paths:
           description: New AP deployed
     put:
       tags: [AP]
-      operationId: ap.put_by_company
+      operationId: ap.put_by_site
       summary: Update an AP in a Site
       parameters:
         - $ref: '#/parameters/Site'
@@ -75,10 +75,14 @@ paths:
           description: AP updated
     delete:
       tags: [AP]
-      operationId: ap.delete_by_Site
+      operationId: ap.delete_by_site
       summary: Undeploy an AP
       parameters:
         - $ref: '#/parameters/Site'
+        - name: AP
+          in: body
+          schema:
+            $ref: '#/definitions/AP'
       responses:
         '204':
           description: AP undeployed
@@ -140,4 +144,3 @@ definitions:
         example: "Q2xx-xxxx-xxxx"
         pattern: "^Q2[0-9A-Za-z-]{2}-[0-9A-Za-z-]{4}-[0-9A-Za-z-]{4}$"
         readOnly: true
-
