@@ -1,6 +1,6 @@
 swagger: '2.0'
 info:
-  title: AP Wifi API
+  title: OPTEAMA AP Wifi API
   version: "0.1"
 consumes:
   - application/json
@@ -11,20 +11,22 @@ paths:
     get:
       tags: [AP]
       operationId: ap.get_all
-      summary: Get all AP Wifi
+      summary: Get all AP in all the sites
       responses:
         200:
-          description: Return all AP Wifi
+          description: Return list of AP
           schema:
             type: array
             items:
               $ref: '#/definitions/AP'
+        404:
+          description: Organization not found
     post:
       tags: [AP]
-      operationId: ap.post_bulk
-      summary: Deploy or update many AP
+      operationId: ap.create_multiple
+      summary: Deploy multiple AP
       parameters:
-        - name: AP
+        - name: ap_list
           in: body
           schema:
             type: array
@@ -32,60 +34,80 @@ paths:
               $ref: '#/definitions/AP'
       responses:
         200:
-          description: New APs deployed
+          description: APs created
+        403:
+          description: APs creation failed
   /wifi/ap/{site}:
     get:
       tags: [AP]
       operationId: ap.get_by_site
-      summary: Get all AP within a Site
+      summary: Get all AP within a site
       parameters:
         - $ref: '#/parameters/Site'
       responses:
         200:
-          description: Return all AP within a Site
+          description: Return list of AP
           schema:
             $ref: '#/definitions/AP'
         404:
-          description: Unknown Site
+          description: Site not found
     post:
       tags: [AP]
-      operationId: ap.post_by_site
-      summary: Deploy or update an AP in a Site
+      operationId: ap.create
+      summary: Deploy an AP in a site
       parameters:
         - $ref: '#/parameters/Site'
-        - name: AP
+        - name: ap
           in: body
           schema:
             $ref: '#/definitions/AP'
       responses:
         200:
-          description: New AP deployed
+          description: AP created
+        403:
+          description: AP creation failed
     put:
       tags: [AP]
-      operationId: ap.put_by_site
-      summary: Update an AP in a Site
+      operationId: ap.update
+      summary: Update an AP in a site
       parameters:
         - $ref: '#/parameters/Site'
-        - name: AP
+        - name: ap
           in: body
           schema:
             $ref: '#/definitions/AP'
       responses:
         200:
           description: AP updated
-    delete:
+        403:
+          description: AP update failed
+  /wifi/ap/{site}/{serial}:
+    get:
       tags: [AP]
-      operationId: ap.delete_by_site
-      summary: Undeploy an AP
+      operationId: ap.get_by_serial
+      summary: Get AP defined by serial within a site
       parameters:
         - $ref: '#/parameters/Site'
-        - name: AP
-          in: body
+        - $ref: '#/parameters/Serial'
+      responses:
+        200:
+          description: Return AP
           schema:
             $ref: '#/definitions/AP'
+        404:
+          description: AP not found
+    delete:
+      tags: [AP]
+      operationId: ap.remove
+      summary: Remove an AP from a site
+      parameters:
+        - $ref: '#/parameters/Site'
+        - $ref: '#/parameters/Serial'
       responses:
-        '204':
-          description: AP undeployed
+        200:
+          description: AP removed
+        403:
+          description: AP removal failed
 
 parameters:
   Site:
@@ -95,10 +117,17 @@ parameters:
     type: string
     required: true
     enum: [TLS, MRG, SNZ, MLT, RCF]
+  Serial:
+    name: serial
+    description: Serials
+    in: path
+    type: string
+    required: true
 definitions:
   AP:
     type: object
     required:
+      - site
       - building
       - floor
       - serial
@@ -107,8 +136,9 @@ definitions:
         type: string
         description: AP's name
         example: "TLS-AP-SKP-1c-3"
-        minLength: 3
-        maxLength: 3
+        pattern: "^[A-Z]{3}-AP-[A-Z]{3}-[A-Za-z0-9]{1,3}-[0-9]{1,3}$"
+        minLength: 14
+        maxLength: 18
       site:
         type: string
         enum: [TLS, MRG, SNZ, MLT, RCF]
@@ -124,7 +154,7 @@ definitions:
         type: string
         description: Floor's name
         example: "1c"
-        minLength: 3
+        minLength: 1
         maxLength: 3
       lat:
         type: string
@@ -132,7 +162,7 @@ definitions:
         example: "3.4743636"
         minLength: 6
         maxLength: 10
-      lon:
+      lng:
         type: string
         description: Longitude
         example: "40.3743194"
