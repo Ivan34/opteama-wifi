@@ -1,18 +1,29 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
+# coding: utf-8
 """
-Meraki class to drive AP deployment
+Meraki library for device management
 __status__ = "Prototype"
 __author__ = "guillain.sanchez@dimensiondata.com"
 """
-
 import json
 import logging
 import os
-import re
+from functools import wraps
 from urllib.parse import urljoin
 
 import requests
+
+
+# Decorator checking if the network is already identified
+def check_network(func):
+    @wraps(func)
+    def wrapper(cls, *args, **kwargs):
+        if args[0] and args[0] not in cls.networks:
+            cls.networks = cls.get_networks()
+        if args[0] and args[0] not in cls.networks:
+            return
+        return func(cls, *args, **kwargs)
+    return wrapper
 
 
 class Meraki:
@@ -22,7 +33,7 @@ class Meraki:
 
     def __init__(self, token, base_url, organization_name):
         """
-        Initialize logging, proxies and basic settings
+        Initialize logging, proxies and Meraki settings
         """
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s :: %(message)s')
 
@@ -41,89 +52,147 @@ class Meraki:
                 'https': proxy_url
             }
 
-        # Settings
+        # Meraki settings
         self.token = token
         self.base_url = base_url
         self.organization_id = self.get_organization_id(organization_name)
+        self.networks = self.get_networks()
 
-    def __repr__(self):
-        return "{} - {} - {}".format(self.token, self.base_url, self.organization_id)
+    def __repr__(self) -> str:
+        return "{} - {}".format(self.base_url, self.organization_id)
 
-    # API features
-    def get_device(self, site=None, serial=None):
-        if site:
-            if serial:
-                return self.request("GET", "networks/{}/devices/{}".format(self.get_network_id(site), serial))
-            return self.request("GET", "networks/{}/devices".format(self.get_network_id(site)))
-        return self.request("GET", "organizations/{}/inventory".format(self.organization_id))
+    def get_networks(self) -> dict:
+        """
+        Get all the organization networks
 
-    def post_device(self, serial, site, building, floor, lat=None, lon=None):
-        r = self.request(
-            "POST",
-            "networks/{}/devices/claim".format(self.get_network_id(site)),
-            json.dumps({'serial': serial})
-        )
-        if not r:
-            return
-
-        r = self.update_device(serial, site, building, floor, lat, lon)
-        return r
-
-    def update_device(self, serial, site, building=None, floor=None, lat=None, lon=None):
-        r = self.get_device(site, serial)
-
-        if re.match("[A-Z]{3}-AP-[A-Z]{3}-[A-Za-z0-9]*-[0-9]*", r['name']):
-            _site, _AP, current_building, current_floor, index = r['name'].split('-')
-            if not building:
-                building = current_building
-            if not floor:
-                floor = current_floor
-        else:
-            r = self.get_device(site)
-            pattern = '{}-AP-{}-{}-'.format(site, building, floor)
-            index_list = [int(dic['name'][len(pattern):]) for dic in r if dic['name'].startswith(pattern)]
-            if index_list:
-                index = max(index_list) + 1
-            else:
-                index = 1
-
-        data = {'name': '{}-AP-{}-{}-{}'.format(site, building, floor, index)}
-
-        if lat:
-            data['lat'] = lat
-        if lon:
-            data['lon'] = lon
-
-        r = self.request(
-            "PUT",
-            "/networks/{}/devices/{}".format(self.get_network_id(site), serial),
-            json.dumps(data)
-        )
-        return r
-
-    def remove_device(self, site, serial):
-        return self.request("POST", "networks/{}/devices/{}/remove".format(self.get_network_id(site), serial))
+        :return: A dictionary {name: id} of the organization networks
+        """
+        status, res = self.request("GET", "organizations/{}/networks".format(self.organization_id))
+        if status == requests.codes.ok:
+            return {rec['name']: rec['id'] for rec in res}
 
     # Functions
-    def request(self, action, path, data=None):
+    def get_organization_id(self, organization_name) -> str:
+        """
+        Get the organization identifier
+
+        :param organization_name: Name of the organization
+        :return: Id of the organization
+        """
+        status, res = self.request("GET", "organizations")
+        if status == requests.codes.ok:
+            for rec in res:
+                if rec['name'] == organization_name:
+                    return rec['id']
+
+    def request(self, action, path, data=None) -> tuple:
+        """
+        Wrapper function to execute formatted HTTP requests
+
+        :param action: HTTP action (GET, POST, PUT, DELETE, ...)
+        :param path: Path which will be joined to the url
+        :param data: Data to send in a POST/PUT request
+        :return: A tuple of the request status code and the resulting json if existing
+        """
         headers = {
             'X-Cisco-Meraki-API-Key': self.token,
             'Cache-Control': "no-cache",
             "Content-Type": "application/json",
         }
         r = requests.request(action, urljoin(self.base_url, path), headers=headers, proxies=self.proxies, data=data)
-        if r.status_code != requests.codes.ok:
-            return None
-        return r.json()
+        log_data = ""
+        if data:
+            log_data = " Data:\n{}".format(json.dumps(json.loads(data), indent=4))
+        logging.info("%s request to %s returned status code %s.%s", action, r.url, r.status_code, log_data)
+        try:
+            return r.status_code, r.json()
+        except json.decoder.JSONDecodeError:
+            return r.status_code, None
 
-    def get_network_id(self, name) -> str:
-        r = self.request("GET", "organizations/{}/networks".format(self.organization_id))
-        for rec in r:
-            if rec['name'] == name:
-                return rec['id']
+    # API features
+    @check_network
+    def get_devices(self, network=None, serial=None) -> list:
+        """
+        Get devices matching some parameters
 
-    def get_organization_id(self, name) -> str:
-        r = self.request("GET", "organizations")
-        for rec in r:
-            if rec['name'] == name:
-                return rec['id']
+        :param network: Network name
+        :param serial: Serial of the device
+        :return: List of dictionaries describing devices
+        """
+        if network:
+            if serial:
+                # When requesting one device, returns a list with this device for uniformity
+                res = []
+                status, dic = self.request("GET", "networks/{}/devices/{}".format(self.networks[network], serial))
+                res.append(dic)
+            else:
+                # Request all devices of a network
+                status, res = self.request("GET", "networks/{}/devices".format(self.networks[network]))
+        else:
+            status = None
+            res = []
+            for network_id in self.networks.values():
+                # When requesting all devices, concatenate all devices from each network
+                _status, _res = self.request("GET", "networks/{}/devices".format(network_id))
+                res.extend(_res)
+                if _status == requests.codes.ok:
+                    # If at at least one request is successful, status will be ok
+                    status = requests.codes.ok
+        if status == requests.codes.ok:
+            return res
+
+    @check_network
+    def create_device(self, network, serial, data) -> int:
+        """
+        Claim and update a device
+
+        :param network: Network name
+        :param serial: Serial of the device
+        :param data: Dictionary of the device attributes
+        :return: Status code 201 if successful, Status code of the request otherwise
+        """
+        status, _ = self.request(
+            "POST",
+            "networks/{}/devices/claim".format(self.networks[network]),
+            json.dumps({'serial': serial})
+        )
+        if status not in (requests.codes.created, requests.codes.ok):
+            return status
+
+        put_status = self.update_device(network, serial, data)
+        if put_status == requests.codes.ok:
+            return requests.codes.created
+        else:
+            return put_status
+
+    @check_network
+    def update_device(self, network, serial, data) -> int:
+        """
+        Update a device
+
+        :param network: Network name
+        :param serial: Serial of the device
+        :param data: Dictionary of the device attributes
+        :return: Status code of the request
+        """
+        status, _ = self.request(
+            "PUT",
+            "networks/{}/devices/{}".format(self.networks[network], serial),
+            json.dumps(data)
+        )
+        return status
+
+    @check_network
+    def remove_device(self, network, serial) -> int:
+        """
+        Remove a device from a network
+
+        :param network: Network name
+        :param serial: Serial of the device
+        :return: Status code of the request
+        """
+        status, _ = self.request(
+            "POST",
+            "networks/{}/devices/{}/remove".format(self.networks[network], serial)
+        )
+        return status
